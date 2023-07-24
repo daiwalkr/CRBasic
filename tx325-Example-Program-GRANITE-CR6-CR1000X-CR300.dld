@@ -1,0 +1,362 @@
+'Example TX326 and TX325 CRBasic Program
+' Runs on a CR300, CR1000X, CR6, GRANITE6, GRANITE9, or GRANITE10 datalogger
+' Author: Gary T. Roberts, Manager - Product Compliance and Test
+' Email: gtroberts@campbellsci.com
+' Phone: 435-227-9623
+'
+' Version: 2020.02.11.00
+'  Change: Updated to use CONST table
+'    Added ability to set off a random transmission at any time if force_random_tx_now is set to True
+'
+' Version: 2020.03.09.00
+'  Change: Add Hourly table to show how values from another table can be used in a GOES table. Fixed
+'    a typo in the UTC_OFFSET where we listed it as minutes instead of seconds.
+'
+' Version: 2020.04.07.00
+'  Change: Added baud rate comments for MeteoSat/EUROSAT. Even though the baud rates are set to 101 and 1201 they
+'    really are transmitting at 100 and 1200 baud. The 101 and 1201 tell the datalogger that the TX326
+'    is being used for on the MeteoSat / EUROSat system.
+'
+' Version: 2020.04.24.00
+'  Change: Fixed an error where I was using DATA_FORMAT in the wrong place. Added a GOES_RADIO_TYPE for the radio 
+'    and put DATA_FORMAT in the correction position in GOESTable().
+'
+' Version: 2020.05.01.00
+'  Change: Fixed an error with VSWR being a long instead of a float. Added results explaination to variables/settings. 
+'
+' Version: 2021.10.18.00
+'  Change: Addded ability to set GOES Antenna Gain. Setting is ignored if TX325 has v.1.6 (OS Version: 15:22:26 01/17/2018)
+'    firmware. v2.0 (OS Version: 10:25:03 04/23/2020) firmware is required in the TX325 in order for this setting to work.
+'    Also requires the latest logger OS in order to set and read GOES Antenna Gain.
+'
+
+ConstTable (TX325_OPTIONS)
+  'General radio user options
+  Const __GENERAL_OPTIONS__        = "== GENERAL OPTIONS =="
+  Const GOES_ENABLE                = 1             ' 1 = On, 0 = Off
+  Const GOES_COMPORT               = COMRS232      ' Can be other comport depending on datalogger
+  Const GOES_RADIO_TYPE            = 3             ' 0 = No connection protocol (for testing), 1 = TX321 (currently not working), 2 = COM9602 (Irridium), 3 = TX325/TX326
+  Const GOES_ID                    = "12345678"    ' Must be in quotes as this is a string value
+  Const UTC_OFFSET                 = -25200        ' Seconds from UTC time. -25200 = Mountain Standard Time
+  
+  ' Self-Timed transmission options
+  Const __SELF_TIMED_OPTIONS__     = "== SELF-TIMED OPTIONS =="
+  Const SELF_TIMED_CHANNEL         = 000           ' 0 to 566
+  Const SELF_TIMED_BAUD_RATE       = 300           ' 300 or 1200 for GOES / 101 or 1201 for MeteoSat
+  Const SELF_TIMED_INTERVAL        = "00:00:03:00" ' Must be in quotes. DD:HH:MM:SS
+  Const SELF_TIMED_OFFSET          = "00:20:00"    ' Must be in quotes. HH:MM:SS
+  Const SELF_TIMED_WINDOW          = 10            ' Seconds. Size of TX window
+  #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+    Const SELF_TIMED_TX_ANTENNA_GAIN = 140           ' Sets GOES Antenna Gain for Self-timed tranmissions. 1200 baud max 200, 300 Buad max 140
+  #EndIf
+  
+  ' Random transmission options
+  Const __RANDOM_OPTIONS__         = "== RANDOM OPTIONS =="
+  Const RANDOM_CHANNEL             = 000
+  Const RANDOM_BAUD_RATE           = 300           ' 300 or 1200 for GOES / 101 or 1201 for MeteoSat
+  Const RANDOM_INTERVAL            = "00:30:00"    ' Must be in quotes. HH:MM:SS
+  Const RANDOM_REPEAT_COUNT        = 1             ' 1 to 3
+  #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+    Const RANDOM_TX_ANTENNA_GAIN     = 140           ' Sets GOES Antenna Gain for Random tranmissions. 1200 baud max 200, 300 Buad max 140
+  #EndIf
+  
+  ' Data options
+  Const __DATA_OPTIONS__           = "== DATA OPTIONS =="
+  Const DATA_FORMAT                = 3             ' ASCII comma seperated values
+  Const NUMBER_OF_VALUES_TO_TX     = 4
+  
+  ' Apply settings
+  Const __APPLY_CHANGES__          = "== APPLY SETTINGS ==" 'Set ApplyAndRestart to 1 or -1 to apply settings. Logger will restart.
+EndConstTable
+
+Public battery_voltage
+Public panel_temperature
+Public warning_message As String * 13 'Max size string allowed in GOESTable
+
+'these come from the datalogger directly
+Public goes_enabled                             'reports if TX325/TX326 is enable in datalogger. 0 = disabled, 1 = enabled.
+Public goes_com_port                            'reports the current comport used with the TX325/TX326
+Public goes_message_window                      'reports the current self-timed/standard transmission window in seconds set in the datalogger.
+Public goes_repeat_count                        'reports the current ALERT/Random message repeat transmission setting in the datalogger.
+Public goes_platform_id As String               'reports the current id to be used in the radio in HEX of the datalogger.
+Public goes_rt_baud_rate                        'reports the current datalogger setting for baud rate to be used by the TX325/TX326 radio for alert/random transmissions.
+Public goes_rt_channel                          'reports the current datalogger setting for the channel that the TX325/TX326 is to use for alert/random transmissions.
+Public goes_st_baud_rate                        'reports the current datalogger setting for baud rate to be used by the TX325/TX326 radio for self-timed/standard transmissions.
+Public goes_st_channel                          'reports the current datalogger setting for the channel that the TX325/TX326 is to use for self-timed/stnadard transmissions.
+Public goes_rt_interval As String               'reports the current datalogger setting for the interval for random/alert transmissions. reported HH:MM:SS
+Public goes_st_interval As String               'reports the current datalogger setting for the self-timed/standard transmission interval to be set in the radio. reported in DD:HH:MM:SS
+Public goes_st_offset As String                 'reports the current datalogger setting for the offset of the self-timed/standard transmissions to set in the radio. reported in HH:MM:SS
+
+'these come from the radio via the datalogger. radio must be connected to the radio and the comport and goes_enabled must be set in the datalogger.
+Public reported_transmitter_id As String        'returns the current hex id of the radio as of its last transmission. Setting is only updated on transmission.
+Public goes_date_time As String                 'current data and time that is in the radio. Time is UTC and the format is YYYY-MM-DD HH:MM:SS.S If 1991-12-31 oo:o:oo.o is shown, the radio is still working on getting a ED GPS fix and valid GPS almanac. It can take up to 20 minutes for this happen.
+Public goes_version As String * 30              'version of the firmware/operating system of the TX325/TX326. Reported as HH:MM:SS MM/YY/YYYY
+Public goes_battery                             'current battery voltage as seen by the TX325/TX326
+Public goes_temperature                         'current temperature in celcius of the TX325/TX326 
+Public goes_battery_before_tx                   'battery voltage as seen by the TX325/TX326 just prior to the radio's last transmission.
+Public goes_temperature_before_tx               'TX325/TX326 temperature recorded just prior to the radio's last transmission.
+Public goes_battery_during_tx                   'battery voltage as seen by the TX325/TX326 during the radio's last transmission.
+Public goes_latitude As Double                  'current latitude of the TX325/TX326 GPS antenna
+Public goes_longitude As Double                 'current longitude of the TX325/TX326 GPS antenna
+Public goes_altitude                            'current altitude of the TX325/TX326 GPS antenna
+Public goes_time_last_gps_position As String    'the reported data and time of the TX325/TX26 last GPS position fix.
+Public goes_number_of_missed_gps                'reported number of GPS fixes.
+Public goes_time_last_missed_gps_fix As String  'reported data and time of the last missed GPS fix. If the radio is reporting 1991-12-31 00:00:00.0, which is the radio's time epic, then the radio has not missed a GPS fix since it was last powered on.
+Public goes_gps_acquisitions_status             'reports the status of the GPS used in the TX325/TX326. 0 = valid GPS fix. 1 = No GPS position fix, no GPS satellites in view. 8 = No GPS position fix, no usable GPS satellites in view. 9 = no GPS position fix, 1 usable GPS satellite in view. 10 = no GPS position fix, 2 usable GPS satellites in view. 11 = no GPS position fix, 3 usable GPS satellites in view.  
+Public goes_gps_antenna                         'reported status of the GPS antenna attached to the TX325/TX326. 0 = antenna is OK. 48 = antenna is shorted.
+Public goes_fail_safe_indicator                 'reported status of TX325/TX326 failsafe feature. 1 = Failsafe has been tripped. 0 = radio i sOK. Failsafe has not been tripped.
+Public goes_durations_of_transmit               'reported duration of the last transmission. reported in milliseconds.
+Public goes_forward_tx_power                    'forward RF power on last transmission reported in watts.
+Public goes_reflected_rf_power                  'reflected RF power on last transmission reported in watts
+Public goes_vswr                                'voltage standing wave radio of last transmission. See DevConfig help for details.
+Public goes_last_tx_control_flags               'control flags of last transmission. Used by Campbell Scientific for support purposes only.
+Public goes_last_tx_start_time As String        'time of last transmission. reported in UTC.
+Public goes_last_tx_channel                     'radio channel of last transmission.
+Public goes_last_type_code                      'report of the type of the last transmission. 1 = Random/Alert 0 = Standard/Self-Timed
+Public goes_last_data_length                    'numver of bytes in the last transmission.
+Public goes_last_hdr_flagword                   'HDR flagword. Used in support of the radio. See DevConfig help for details.
+Public goes_tx_result_code                      'reported status of the last transmission. 0 = last transmission OK. 1 = transmission aborted, battery voltage to the radio is too low. 2 = transmission aborted, radio PLL lock failure. 3 = transmission aborted, radio flas is corrupt.
+Public goes_current_tx_state                    'reported state of the TX325/TX326. 0 = radio is idle. 1 = transmission is in progress. 2 = post=transmission failsafe wait is in progress.
+#If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+  Public goes_antenna_gain                        'reported GOES Antenna Gain that was used on the TX325/TX326 last transmission (either Self-timed or Random.
+#EndIf
+
+Public st_table_results As String * 400
+PUblic rt_table_results As String * 400
+
+Public tx_now As Boolean
+Public force_random_tx_now As Boolean
+
+Dim temp_random_transmission_interval As String
+
+'Hourly data 
+DataTable (HR_DATA, TRUE, -1)
+  DataInterval(0, 1, Hr, 4)
+  Average (1, battery_voltage, IEEE4, False)
+  Average (1, panel_temperature, IEEE4, False)  
+EndTable
+
+'Self-timed data 
+DataTable (ST_DATA, TRUE, -1)
+  DataInterval(0, 15, Min, 4)
+  GOESTable (st_table_results, GOES_COMPORT, GOES_RADIO_TYPE, 0, TRUE, TRUE, DATA_FORMAT)
+  GOESField (NUMBER_OF_VALUES_TO_TX, 1, 3, 6, "")  
+  Sample (1, battery_voltage, IEEE4)
+  GOESField (NUMBER_OF_VALUES_TO_TX, 1, 3, 6, "")  
+  Sample (1, panel_temperature, IEEE4) 
+  GOESField (1, 1, 3, 6, "")  
+  Sample (1, HR_DATA.battery_voltage_Avg, IEEE4) 'Only send 1 value from our hourly table
+  GOESField (1, 1, 3, 6, "")  
+  Sample (1, HR_DATA.panel_temperature_Avg, IEEE4) 'Only send 1 value from our hourly table
+EndTable
+
+'Random data
+DataTable (RT_DATA, tx_now, -1) 
+  GOESTable (rt_table_results, GOES_COMPORT, GOES_RADIO_TYPE, tx_now, TRUE, FALSE, DATA_FORMAT)
+  GOESField (1, 1, 1, 13, "")
+  Sample (1, warning_message, String)
+  GOESField (1, 1, 3, 4, "")  
+  Sample (1, battery_voltage, FP2)
+  GOESField (1, 1, 3, 4, "")  
+  Sample (1, panel_temperature, FP2)
+  Sample (1, reported_transmitter_id, String) 'no GOESField in the line prior to this so it is only stored in the logger and not sent via GOES   
+EndTable
+
+'Force Random TX table
+DataTable (FORCE_RANDOM_TX, True, 1000)
+  GOESTable (rt_table_results, GOES_COMPORT, GOES_RADIO_TYPE, 1, TRUE, FALSE, DATA_FORMAT)
+  GOESField (1, 1, 0, 12, "")
+  Sample (1, "Forced RT: ", String)
+  GOESField (1, 1, 3, 5, "")
+  Sample (1, battery_voltage, FP2)
+EndTable
+
+DataTable (GOES_DIAGNOSTICS, 1, 1000)
+  Sample (1, goes_enabled, FP2) 
+  Sample (1, goes_comport , FP2)
+  Sample (1, goes_message_window, FP2) 
+  Sample (1, goes_repeat_count, FP2) 
+  Sample (1, goes_platform_id, String)
+  Sample (1, goes_rt_baud_rate, FP2)  
+  Sample (1, goes_rt_channel, FP2)  
+  Sample (1, goes_st_baud_rate, FP2) 
+  Sample (1, goes_st_channel, FP2) 
+  Sample (1, goes_rt_interval, String)
+  Sample (1, goes_st_interval, String)
+  Sample (1, goes_st_offset, String)
+  Sample (1, reported_transmitter_id, String)
+  Sample (1, goes_date_time, String)
+  Sample (1, goes_version, String)
+  Sample (1, goes_battery, IEEE4)
+  Sample (1, goes_temperature, IEEE4)
+  Sample (1, goes_battery_before_tx, IEEE4) 
+  Sample (1, goes_temperature_before_tx, FP2)
+  Sample (1, goes_battery_during_tx, IEEE4)
+  Sample (1, goes_latitude, IEEE8)
+  Sample (1, goes_longitude, IEEE8)
+  Sample (1, goes_altitude, FP2) 
+  Sample (1, goes_time_last_gps_position, String)
+  Sample (1, goes_number_of_missed_gps, FP2) 
+  Sample (1, goes_time_last_missed_gps_fix, String)
+  Sample (1, goes_gps_acquisitions_status, FP2) 
+  Sample (1, goes_gps_antenna, FP2) 
+  Sample (1, goes_fail_safe_indicator, FP2) 
+  Sample (1, goes_durations_of_transmit, FP2) 
+  Sample (1, goes_forward_tx_power, FP2) 
+  Sample (1, goes_reflected_rf_power, FP2) 
+  Sample (1, goes_vswr, IEEE8)
+  Sample (1, goes_last_tx_control_flags, FP2) 
+  Sample (1, goes_last_tx_start_time, String)
+  Sample (1, goes_last_tx_channel, FP2)
+  Sample (1, goes_last_type_code, FP2) 
+  Sample (1, goes_last_data_length, FP2) 
+  Sample (1, goes_last_hdr_flagword, FP2) 
+  Sample (1, goes_tx_result_code, FP2) 
+  Sample (1, goes_current_tx_state, FP2) 
+  #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+    Sample (1, goes_antenna_gain, FP2) 
+  #EndIf
+EndTable
+
+PreserveVariables
+
+SequentialMode
+
+BeginProg
+  'Set TX325 settings using data from the TX325_OPTIONS CONST table
+  SetSetting ("GOESEnabled", GOES_ENABLE)
+  SetSetting ("GOESComport", GOES_COMPORT) 
+  SetSetting ("GOESPlatformID", GOES_ID)
+  
+  SetSetting ("GOESMsgWindow", SELF_TIMED_WINDOW)
+  SetSetting ("GOESSTBaudRate", SELF_TIMED_BAUD_RATE)
+  SetSetting ("GOESSTChannel", SELF_TIMED_CHANNEL)
+  SetSetting ("GOESSTInterval", SELF_TIMED_INTERVAL)
+  SetSetting ("GOESSTOffset", SELF_TIMED_OFFSET)
+  #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+    SetSetting ("GOESGainSetting", SELF_TIMED_TX_ANTENNA_GAIN)
+  #EndIf
+  
+  SetSetting ("GOESRepeatCount", RANDOM_REPEAT_COUNT)
+  SetSetting ("GOESRTBaudRate", RANDOM_BAUD_RATE)
+  SetSetting ("GOESRTChannel", RANDOM_CHANNEL)
+  SetSetting ("GOESRTInterval", RANDOM_INTERVAL)
+  
+  SetSetting ("UTCOffset", UTC_OFFSET)
+
+  Scan (1, Min, 0, 0)
+    Battery (battery_voltage)
+    PanelTemp (panel_temperature, _60Hz)
+    
+    If ((panel_temperature > 29) OR (tx_now = TRUE)) Then 
+      tx_now = TRUE
+      warning_message = "ALARM EVENT!"
+      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+        SetSetting ("GOESGainSetting", RANDOM_TX_ANTENNA_GAIN) 'Needed if Self-Timed baud rate is 1200 and Random is 300 baud.
+      #EndIf
+      CallTable RT_DATA
+    EndIf
+    
+    #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+      SetSetting ("GOESGainSetting", SELF_TIMED_TX_ANTENNA_GAIN) 
+    #EndIf
+
+    CallTable HR_DATA
+    CallTable ST_DATA
+    
+    'reset tx_now after we have the data recorded
+    tx_now = FALSE
+    
+    If (force_random_tx_now = True) Then
+      TriggerSequence (2, 0)
+    EndIf
+  NextScan
+
+  SlowSequence
+    Scan(15, Min, 0, 0)
+      goes_platform_id = UpperCase(Settings.GOESPlatformID)
+      goes_enabled = Settings.GOESEnabled
+      goes_com_port = Settings.GOESComport
+      goes_message_window = Settings.GOESMsgWindow
+      goes_repeat_count = Settings.GOESRepeatCount
+      goes_rt_baud_rate = Settings.GOESRTBaudRate
+      goes_rt_channel = Settings.GOESRTChannel
+      goes_st_baud_rate = Settings.GOESSTBaudRate
+      goes_st_channel = Settings.GOESSTChannel
+      goes_rt_interval = Settings.GOESRTInterval
+      goes_st_interval = Settings.GOESSTInterval
+      goes_st_offset = Settings.GOESSTOffset
+
+      reported_transmitter_id = UpperCase(Settings.GOESid)
+      goes_date_time = Settings.GOESdateTime
+      goes_version = Settings.GOESversion
+      goes_battery = Settings.GOESCurrentbattery 
+      goes_temperature = Settings.GOESCurrenttemperature
+      goes_battery_before_tx = Settings.GOESbatteryBeforeTx 
+      goes_temperature_before_tx = Settings.GOEStemperatureBeforeTx
+      goes_battery_during_tx = Settings.GOESbatteryDuringTx 
+      goes_latitude = Settings.GOESLatitude
+
+      goes_longitude = Settings.GOESLongitude
+      goes_altitude = Settings.GOESAltitude
+      goes_time_last_gps_position = Settings.GOESTimeLastGPSPosition
+      goes_number_of_missed_gps = Settings.GOESNumberOfMissedGPS
+      goes_time_last_missed_gps_fix = Settings.GOESTimeLastMissedGPSFix
+      goes_gps_acquisitions_status = Settings.GOESGPSAcquisitionStatus
+      goes_gps_antenna = Settings.GOESGPSAntennaStatus
+      goes_fail_safe_indicator = Settings.GOESFailSafeIndicator
+      goes_durations_of_transmit = Settings.GOESDurationOfTransmit
+
+      goes_forward_tx_power = Settings.GOESForwardTxPower
+      goes_reflected_rf_power = Settings.GOESReflectedRfPower
+      goes_vswr = Settings.GOESVSWR
+      goes_last_tx_control_flags = Settings.GOESLastTxControlFlags
+      goes_last_tx_start_time = Settings.GOESLastTxStartTime
+      goes_last_tx_channel = Settings.GOESLastTxChannel
+      goes_last_type_code = Settings.GOESLastTypeCode
+      goes_last_data_length = Settings.GOESLastDatalength
+      goes_last_hdr_flagword = Settings.GOESLastHDRFlagWord
+      goes_tx_result_code = Settings.GOESTxResultCode
+      goes_current_tx_state = Settings.GOESCurrentTxState
+      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+        goes_antenna_gain = Settings.GOESAntennaGain
+      #EndIf
+
+      CallTable GOES_DIAGNOSTICS  
+    NextScan
+  EndSequence
+  
+  'Force a Random Transmission when needed for testing, etc.
+  SlowSequence
+    Do
+      WaitTriggerSequence
+      Battery (battery_voltage)
+      temp_random_transmission_interval = Settings.GoesRTInterval
+      SetSetting ("GOESRTInterval", "00:00:05")
+      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+        SetSetting ("GOESGainSetting", RANDOM_TX_ANTENNA_GAIN)
+      #EndIf
+      CallTable FORCE_RANDOM_TX
+      force_random_tx_now = False
+      
+      Delay (0, 10, Sec)
+      SetSetting ("GOESRTInterval", temp_random_transmission_interval)
+      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
+        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
+        SetSetting ("GOESGainSetting", SELF_TIMED_TX_ANTENNA_GAIN) 
+      #EndIf
+      
+      CallTable GOES_DIAGNOSTICS
+    Loop
+  EndSequence
+EndProg
+

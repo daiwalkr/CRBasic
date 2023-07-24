@@ -1,0 +1,389 @@
+'version 2020.10.30.00 -GTR
+
+Public alarm_message As String * 50
+Public battery_voltage
+Public in_alarm As Boolean
+Public panel_temperature
+
+Public dcp_platform_id As Long
+Public rt_baud_rate 
+Public rt_channel
+Public rt_count
+Public rt_interval As String
+Public st_baud_rate
+Public st_channel
+Public st_interval As String
+Public st_message_window_size As Long
+Public st_offset As String
+
+Public rt_tx_data_result_code
+Public rt_result_code
+Public st_tx_data_result_code
+Public st_status
+Public st_result_code
+
+Public tx_325_status(37) As Long
+  Alias tx_325_status(1) = status_result '0 = success, -1 = timout, -2 = no SOH character returned, -3 = bad checksum  
+                                        '-10 = no CTS asserted
+Public tx_325_status_results As String * 30
+  Alias tx_325_status(2) = time_status   '&h00 = completed OK, &h0A = time-of-day clock not loaded yet.
+Public tx_325_time_status As String * 50
+  Alias tx_325_status(3) = reported_year 'current year.
+  Alias tx_325_status(4) = julian_day    'current day into the year
+Public reported_month As Long
+Public reported_day As Long
+  Alias tx_325_status(5) = reported_hour
+  Alias tx_325_status(6) = reported_minute
+  Alias tx_325_status(7) = reported_second
+  Alias tx_325_status(8) = reported_tenths_of_a_second
+  Alias tx_325_status(9) = reported_radio_id_decimal
+Public reported_radio_id_hex As String
+  Alias tx_325_status(10) = radio_firmware_build_time
+  Alias tx_325_status(11) = radio_firmware_build_date
+  Alias tx_325_status(12) = radio_battery_voltage
+  Alias tx_325_status(13) = radio_temperature
+  Alias tx_325_status(14) = radio_battery_voltage_before_last_tx
+  Alias tx_325_status(15) = radio_temperature_before_last_tx
+  Alias tx_325_status(16) = radio_battery_during_last_tx
+  Alias tx_325_status(17) = latitude_deg
+  Alias tx_325_status(18) = latitude_min
+  Alias tx_325_status(19) = latitude_direction
+Public reported_latitude_direction_letter As String * 2
+  Alias tx_325_status(20) = longitude_deg
+  Alias tx_325_status(21) = longitude_min
+  Alias tx_325_status(22) = longitude_direction
+Public reported_longitude_direction_letter As String * 2
+  Alias tx_325_status(23) = altitude 'reported in meters
+  Alias tx_325_status(24) = year_of_last_gps_fix
+  Alias tx_325_status(25) = julian_day_of_last_gps_fix
+Public month_of_last_gps_fix As Long
+Public day_of_last_gps_fix As Long
+  Alias tx_325_status(26) = hour_of_last_gps_fix
+  Alias tx_325_status(27) = minute_of_last_gps_fix
+  Alias tx_325_status(28) = second_of_last_gps_fix
+  Alias tx_325_status(29) = number_of_missed_gps_fixes
+  Alias tx_325_status(30) = year_of_last_missed_gps_fix_attempt
+  Alias tx_325_status(31) = julian_day_of_last_missed_gps_fix_att
+Public month_of_last_missed_gps_attempt As Long
+Public day_of_last_missed_gps_attempt As Long
+  Alias tx_325_status(32) = hour_of_last_missed_gps_fix_attempt 
+  Alias tx_325_status(33) = minute_of_last_missed_gps_fix_attempt
+  Alias tx_325_status(34) = second_of_last_missed_gps_fix_attempt
+  Alias tx_325_status(35) = radio_gps_health
+  Alias tx_325_status(36) = radio_failsafe_status
+  Alias tx_325_status(37) = duration_of_last_radio_transmission
+  
+Public current_tx325_time As String * 40
+Public current_radio_battery_voltage
+Public current_radio_battery_during_last_tx
+Public current_battery_voltage_before_last_tx
+Public last_gps_fix_time As String * 40
+Public last_missed_gps_fix_attempt As String * 50
+Public gps_health As String * 40
+Public failsafe_status As String * 50
+Public self_timed_transmission_status As String * 100
+Public random_transmission_status As String * 100
+
+DataTable (RANDOM_DATA, TRUE, -1)
+  Sample (1, alarm_message, String)
+EndTable
+
+DataTable (SELF_TIMED_DATA, TRUE, -1)
+  DataInterval (0, 15, Min, 4)
+  Sample (1, battery_voltage, FP2)
+  Sample (1, panel_temperature, FP2)
+EndTable
+
+DataTable (TX325_DIAG, TRUE, 3000)
+  Sample (37, tx_325_status(), IEEE4)
+  Sample (1, reported_radio_id_hex, String)
+  Sample (1, current_tx325_time, String)
+  Sample (1, last_gps_fix_time, String) 
+  Sample (1, last_missed_gps_fix_attempt, String)
+  Sample (1, gps_health, String)
+  Sample (1, failsafe_status, String)
+EndTable
+
+'This subroutine converts day of year (DOY) to months and years
+Sub ConvertDayOfYear (_day_of_year As Long, _year As Long, _month As Long, _day As Long)					
+	Dim leap_year As Boolean
+
+	If (_year MOD 4 = 0) Then 'If the year is divisable by 4
+	  leap_year = TRUE
+		If (_year MOD 100 = 0) AND (_year MOD 400 <> 0) Then 'to be a leap year, the year must also be divisiable by both 100 and 400 
+		                                                     '  see https://docs.microsoft.com/en-us/office/troubleshoot/excel/determine-a-leap-year
+			  leap_year = FALSE
+		EndIf
+	Else
+		leap_year = FALSE
+	EndIf
+
+	If leap_year = FALSE Then
+		If _day_of_year <= 31 Then                             'Are we in the month of January
+			_month = 1
+			_day = _day_of_year
+		ElseIf _day_of_year > 31 AND _day_of_year <= 59 Then   'Are we in the month of February
+			_month = 2
+			_day = _day_of_year - 31
+		ElseIf _day_of_year > 59 AND _day_of_year <= 90 Then   'Are we in the month of March
+			_month = 3
+			_day = _day_of_year - 59
+		ElseIf _day_of_year > 90 AND _day_of_year <= 120 Then  'Are we in the month of April
+			_month = 4
+			_day = _day_of_year - 90
+		ElseIf _day_of_year > 120 AND _day_of_year <= 151 Then 'Are we in the month of May
+			_month = 5
+			_day = _day_of_year - 120
+		ElseIf _day_of_year > 151 AND _day_of_year <= 181 Then 'Are we in the month of June
+			_month = 6
+			_day = _day_of_year - 151
+		ElseIf _day_of_year > 181 AND _day_of_year <= 212 Then 'Are we in the month of July
+			_month = 7
+			_day = _day_of_year -181
+		ElseIf _day_of_year > 212 AND _day_of_year <=243 Then  'Are we in the month of August
+			_month = 8
+			_day = _day_of_year - 212
+		ElseIf _day_of_year > 243 AND _day_of_year <= 273 Then 'Are we in the month of September
+			_month = 9
+			_day = _day_of_year - 243
+		ElseIf _day_of_year > 273 AND _day_of_year <= 304 Then 'Are we in the month of October
+			_month = 10
+			_day = _day_of_year - 273
+		ElseIf _day_of_year > 304 AND _day_of_year <= 334 Then 'Are we in the month of November
+			_month = 11
+			_day = _day_of_year - 304
+		ElseIf _day_of_year > 334 Then                         'Are we in the month of December
+			_month = 12
+			_day = _day_of_year - 334
+		EndIf
+	ElseIf leap_year = TRUE Then                             'Are we in the month of January
+		If _day_of_year <= 31 Then
+			_month = 1
+			_day = _day_of_year
+		ElseIf _day_of_year > 31 AND _day_of_year <= 60 Then   'Are we in the month of February
+			_month = 2
+			_day = _day_of_year - 31
+		ElseIf _day_of_year > 60 AND _day_of_year <= 91 Then   'Are we in the month of March
+			_month = 3
+			_day = _day_of_year - 60
+		ElseIf _day_of_year > 91 AND _day_of_year <= 121 Then  'Are we in the month of April
+			_month = 4
+			_day = _day_of_year - 91
+		ElseIf _day_of_year > 121 AND _day_of_year <= 152 Then 'Are we in the month of May
+			_month = 5
+			_day = _day_of_year - 121
+		ElseIf _day_of_year > 152 AND _day_of_year <= 182 Then 'Are we in the month of June
+			_month = 6
+			_day = _day_of_year - 152
+		ElseIf _day_of_year > 182 AND _day_of_year <= 213 Then 'Are we in the month of July
+			_month = 7
+			_day = _day_of_year - 182
+		ElseIf _day_of_year > 213 AND _day_of_year <= 244 Then 'Are we in the month of August
+			_month = 8
+			_day = _day_of_year - 213
+		ElseIf _day_of_year > 244 AND _day_of_year <= 274 Then 'Are we in the month of September
+			_month = 9
+			_day = _day_of_year - 244
+		ElseIf _day_of_year > 274 AND _day_of_year <= 305 Then 'Are we in the month of October
+			_month = 10
+			_day = _day_of_year - 274
+		ElseIf _day_of_year > 305 AND _day_of_year <= 335 Then 'Are we in the month of November
+			_month = 11
+			_day = _day_of_year - 305
+		ElseIf _day_of_year > 335 Then                         'Are we in the month of December
+			_month = 12
+			_day = _day_of_year - 335
+		EndIf
+	EndIf
+EndSub
+
+BeginProg
+  dcp_platform_id = &h01234567
+  rt_baud_rate = 300
+  rt_channel = 195
+  rt_count = 2 'we can only send two messages max in a 2 minute RT interval. We can send more if our RT interval is larger.
+  rt_interval = "00_00_02"
+  st_baud_rate = 300
+  st_channel = 195
+  st_interval = "00_01_00_00"
+  st_message_window_size = 10
+  st_offset = "00_45_50"
+  
+  st_tx_data_result_code = -99
+  rt_tx_data_result_code = -99
+
+	Scan (1, Min, 0, 0)
+		PanelTemp (panel_temperature, 60)
+		Battery (battery_voltage)
+		
+    CallTable SELF_TIMED_DATA 
+
+    EnviroSatSTSetup (st_status, st_result_code, dcp_platform_id, st_message_window_size, st_channel, st_baud_rate, st_interval, st_offset)
+    EnviroSatRandomSetup (rt_result_code, dcp_platform_id, rt_channel, rt_baud_rate, rt_interval, rt_count) 
+    
+    If (in_alarm = TRUE) Then
+      alarm_message = "DCP/Station is in Alarm!"
+      CallTable RANDOM_DATA
+      EnviroSatData (rt_tx_data_result_code, RANDOM_DATA, 0, 3, 4)
+      in_alarm = FALSE
+      alarm_message = ""
+    EndIf
+    
+    EnviroSatData (st_tx_data_result_code, SELF_TIMED_DATA, 0, 0, 1)
+
+		If (TimeIntoInterval(0, 1, Min)) Then
+		  TriggerSequence (1, 1000)
+		EndIf
+	NextScan
+
+  SlowSequence
+    Do 'This section of CRBasic code polls the TX325 radio and converts some diagnostic data into human readable values.
+      WaitTriggerSequence 'sequence waits until called from the main scan
+      EnviroSatStatus(tx_325_status)
+      
+      If (status_result = 0) Then
+        tx_325_status_results = "Success."  
+      ElseIf (status_result = -1) Then
+        tx_325_status_results = "Timed Out."
+      ElseIf (status_result = -2) Then
+        tx_325_status_results = "No SOH character returned."
+      ElseIf (status_result = -3) Then
+        tx_325_status_results = "Bad Checksum."
+      ElseIf (status_result = -10) Then
+        tx_325_status_results = "No CTS Asserted."
+      EndIf
+      
+      If (time_status = &h00) Then
+        tx_325_time_status = "Completed OK."  
+      ElseIf (time_status = &h0A) Then
+        tx_325_time_status = "Time-of-day clock not loaded yet."
+      EndIf
+      
+      'everything done from here is to help make things human readable
+      If (status_result = 0) Then
+        Sprintf (reported_radio_id_hex, "%08s", Hex (reported_radio_id_decimal)) 'ensures we always have 8 characters shown
+        reported_latitude_direction_letter = CHR (latitude_direction) 
+        reported_longitude_direction_letter = CHR (longitude_direction)
+      Else
+        reported_radio_id_hex = Hex ( 0 )
+      EndIf
+
+      If (status_result = 0) Then
+        ConvertDayOfYear (julian_day, reported_year, reported_month, reported_day)
+        current_tx325_time = reported_month & "/" & reported_day & "/" & reported_year & " " & reported_hour _
+          & ":" & reported_minute & ":" & reported_second & ":" & reported_tenths_of_a_second
+      Else
+        current_tx325_time = "1/0/1992 0:0:0:0"
+      EndIf
+
+      If (StrComp (current_tx325_time, "1/0/1992 0:0:0:0") = 0) Then
+        current_tx325_time = "No 3D GPS fix yet or radio is offline!"
+      EndIf
+
+      If (status_result = 0) Then
+        year_of_last_gps_fix = year_of_last_gps_fix + 1992
+        ConvertDayOfYear (julian_day_of_last_gps_fix, year_of_last_gps_fix, month_of_last_gps_fix, day_of_last_gps_fix)
+        last_gps_fix_time = month_of_last_gps_fix & "/" & day_of_last_gps_fix & "/" & year_of_last_gps_fix & _
+          " " & hour_of_last_gps_fix & ":" & minute_of_last_gps_fix & ":" & second_of_last_gps_fix
+      Else
+        last_gps_fix_time = "1/0/1992 0:0:0"
+      EndIf
+
+      If (StrComp (last_gps_fix_time, "1/0/1992 0:0:0") = 0) Then
+        last_gps_fix_time = "No 3D GPS fix yet or radio is offline!"
+      EndIf
+
+      If (status_result = 0) Then
+        year_of_last_missed_gps_fix_attempt = year_of_last_missed_gps_fix_attempt + 1992
+        ConvertDayOfYear (julian_day_of_last_missed_gps_fix_att, year_of_last_missed_gps_fix_attempt, month_of_last_missed_gps_attempt, day_of_last_missed_gps_attempt)
+        last_missed_gps_fix_attempt = month_of_last_missed_gps_attempt & "/" & day_of_last_missed_gps_attempt & "/" & year_of_last_missed_gps_fix_attempt _
+           & " " & hour_of_last_missed_gps_fix_attempt & ":" & minute_of_last_missed_gps_fix_attempt & ":" & second_of_last_missed_gps_fix_attempt
+      Else
+        last_missed_gps_fix_attempt = "1/0/1992 0:0:0"
+      EndIf
+
+      If ((StrComp (last_missed_gps_fix_attempt, "1/0/1992 0:0:0") = 0) AND (status_result = 0)) Then
+        last_missed_gps_fix_attempt = "No misses so far!"
+      Else
+        last_missed_gps_fix_attempt = "Logger did not receive report from GOES radio."
+      EndIf
+      
+      If ((Hex (radio_gps_health) = &h00) AND (status_result = 0)) Then
+        gps_health = "Have valid GPS position fix."
+      ElseIf (status_result <> 0) Then
+        gps_health = "No fix, radio is offline!"
+      ElseIf (Hex (radio_gps_health) = &h01) Then
+        gps_health = "No fix, no GPS Satellites in view."
+      ElseIf (Hex (radio_gps_health) = &h08) Then
+        gps_health = "No fix, 0 usable GPS satellites in view."
+      ElseIf (Hex (radio_gps_health) = &h09) Then
+        gps_health = "No fix, 1 usable GPS satellites in view."
+      ElseIf (Hex (radio_gps_health) = &h0A) Then
+        gps_health = "No fix, 2 usable GPS satellites in view."
+      ElseIf (Hex (radio_gps_health) = &h0B) Then
+        gps_health = "No fix, 3 usable GPS satellites in view."
+      EndIf
+      
+      If ((radio_failsafe_status = 0) AND (status_result = 0)) Then
+        failsafe_status = "TX325 is idle."
+      ElseIf ((radio_failsafe_status = 1) AND (status_result = 0)) Then
+        failsafe_status = "Transmit in progress."
+      ElseIf ((radio_failsafe_status = 2) AND (status_result = 0)) Then
+        failsafe_status = "Post-transmitfailsafe wait in progress."
+      ElseIf (status_result <> 0) Then
+        failsafe_status = "Logger did not receive report from GOES radio."
+      EndIf
+      
+      'rt_tx_data_result_code = -99
+      If (st_tx_data_result_code = -99) Then
+        self_timed_transmission_status = "Logger has not tried to send Self-Timed data yet."
+      ElseIf (st_tx_data_result_code = 0) Then
+        self_timed_transmission_status = "EnviroSatData instruction executed sucessfully for Self-Timed data."
+      ElseIf (st_tx_data_result_code = -11) Then
+        self_timed_transmission_status = "There was a buffer control error."
+      ElseIf (st_tx_data_result_code = -16) Then
+        self_timed_transmission_status = "Illegal data format was sent to the TX325."
+      ElseIf (st_tx_data_result_code = -17) Then
+        self_timed_transmission_status = "Data format 0 or 1 was chosen, but table values are not FP2 or ASCII."
+      ElseIf (st_tx_data_result_code = -22) Then
+        self_timed_transmission_status = "The TX325 was not setup correctly by the datalogger."
+      EndIf
+      
+      If (rt_tx_data_result_code = -99) Then
+        random_transmission_status = "Logger has not tried to send Random data yet."
+      ElseIf (rt_tx_data_result_code = 0) Then
+        random_transmission_status = "EnviroSatData instruction executed sucessfully for Random data."
+      ElseIf (rt_tx_data_result_code = -11) Then
+        random_transmission_status = "There was a buffer control error."
+      ElseIf (rt_tx_data_result_code = -16) Then
+        random_transmission_status = "Illegal data format was sent to the TX325."
+      ElseIf (rt_tx_data_result_code = -17) Then
+        random_transmission_status = "Data format 0 or 1 was chosen, but table values are not FP2 or ASCII."
+      ElseIf (rt_tx_data_result_code = -22) Then
+        random_transmission_status = "The TX325 was not setup correctly by the datalogger."
+      EndIf
+
+      'convert millivolts to volts
+      current_radio_battery_voltage = radio_battery_voltage * .001
+      current_radio_battery_during_last_tx = radio_battery_during_last_tx * .001
+      current_battery_voltage_before_last_tx = radio_battery_voltage_before_last_tx * .001
+      
+      If (status_result <> 0) Then Erase (tx_325_status())
+        
+      CallTable TX325_DIAG
+    Loop
+  EndSequence
+  
+  SlowSequence
+    Scan (1, Sec, 0, 0) 'This section of CRBasic code runs the random transmission of data
+      If (in_alarm = TRUE) Then
+        alarm_message = "DCP/Station is in Alarm!"
+        CallTable RANDOM_DATA
+        EnviroSatData (rt_tx_data_result_code, RANDOM_DATA, 0, 3, 4)
+        in_alarm = FALSE
+        alarm_message = ""
+      EndIf
+    NextScan
+  EndSequence
+EndProg
+

@@ -29,6 +29,10 @@
 '    firmware. v2.0 (OS Version: 10:25:03 04/23/2020) firmware is required in the TX325 in order for this setting to work.
 '    Also requires the latest logger OS in order to set and read GOES Antenna Gain.
 '
+' Version: 2023.07.24.00
+'  Change: Changed the SELF_TIMED_INTERVAL to be more realistic. Changed test random tranmissions to 1 minute to be more realistic.
+'    Removed RANDOM_TX_ANTENNA_GAIN as it is redundant. Radio will adjust on it's own if needed. We don't want to wear out the EEProm.
+'
 
 ConstTable (TX325_OPTIONS)
   'General radio user options
@@ -43,7 +47,7 @@ ConstTable (TX325_OPTIONS)
   Const __SELF_TIMED_OPTIONS__     = "== SELF-TIMED OPTIONS =="
   Const SELF_TIMED_CHANNEL         = 000           ' 0 to 566
   Const SELF_TIMED_BAUD_RATE       = 300           ' 300 or 1200 for GOES / 101 or 1201 for MeteoSat
-  Const SELF_TIMED_INTERVAL        = "00:00:03:00" ' Must be in quotes. DD:HH:MM:SS
+  Const SELF_TIMED_INTERVAL        = "00:01:00:00" ' Must be in quotes. DD:HH:MM:SS
   Const SELF_TIMED_OFFSET          = "00:20:00"    ' Must be in quotes. HH:MM:SS
   Const SELF_TIMED_WINDOW          = 10            ' Seconds. Size of TX window
   #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
@@ -57,10 +61,6 @@ ConstTable (TX325_OPTIONS)
   Const RANDOM_BAUD_RATE           = 300           ' 300 or 1200 for GOES / 101 or 1201 for MeteoSat
   Const RANDOM_INTERVAL            = "00:30:00"    ' Must be in quotes. HH:MM:SS
   Const RANDOM_REPEAT_COUNT        = 1             ' 1 to 3
-  #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
-    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
-    Const RANDOM_TX_ANTENNA_GAIN     = 140           ' Sets GOES Antenna Gain for Random tranmissions. 1200 baud max 200, 300 Buad max 140
-  #EndIf
   
   ' Data options
   Const __DATA_OPTIONS__           = "== DATA OPTIONS =="
@@ -256,18 +256,9 @@ BeginProg
     If ((panel_temperature > 29) OR (tx_now = TRUE)) Then 
       tx_now = TRUE
       warning_message = "ALARM EVENT!"
-      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
-        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
-        SetSetting ("GOESGainSetting", RANDOM_TX_ANTENNA_GAIN) 'Needed if Self-Timed baud rate is 1200 and Random is 300 baud.
-      #EndIf
       CallTable RT_DATA
     EndIf
     
-    #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
-    ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
-      SetSetting ("GOESGainSetting", SELF_TIMED_TX_ANTENNA_GAIN) 
-    #EndIf
-
     CallTable HR_DATA
     CallTable ST_DATA
     
@@ -340,20 +331,12 @@ BeginProg
       WaitTriggerSequence
       Battery (battery_voltage)
       temp_random_transmission_interval = Settings.GoesRTInterval
-      SetSetting ("GOESRTInterval", "00:00:05")
-      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
-        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
-        SetSetting ("GOESGainSetting", RANDOM_TX_ANTENNA_GAIN)
-      #EndIf
+      SetSetting ("GOESRTInterval", "00:05:00")
       CallTable FORCE_RANDOM_TX
       force_random_tx_now = False
       
       Delay (0, 10, Sec)
       SetSetting ("GOESRTInterval", temp_random_transmission_interval)
-      #If (((LoggerType = CR6) AND (OSVERSION > 11.01)) OR (LoggerType = CR350) OR ((LoggerType = CR1000X) AND (OSVERSION > 5.01)) OR _
-        ((LoggerType = CR300) AND (OSVERSION > 10.04)) OR (((LoggerType = GRANITE6) OR (LoggerType = GRANITE9) OR (LoggerType = GRANITE10)) AND (OSVERSION > 1.0)))
-        SetSetting ("GOESGainSetting", SELF_TIMED_TX_ANTENNA_GAIN) 
-      #EndIf
       
       CallTable GOES_DIAGNOSTICS
     Loop

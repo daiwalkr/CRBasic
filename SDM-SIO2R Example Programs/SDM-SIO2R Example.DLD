@@ -1,0 +1,467 @@
+'CR1000X Series Datalogger
+'Program: DCP SDM-SIO2R LoopBack Test.CR1X
+'Programmer: Bart Nef - CSI
+'Version: A
+'Date: 10.June.2022
+'
+'Objective: Run communication loopback tests and power control on all the
+'SDM-SIO2R modules used with the DCP.
+'
+SequentialMode
+
+' The SDM units have their own unique COM port numbers used by the CR1000X.
+'Module #1
+Const SDM1 As Long = 32	'SDM Address 0
+Const SDM1_ADDR As Long = 0
+Const SDM2 As Long = 33	'SDM Address 1
+Const SDM2_ADDR As Long = 1
+'Module #2
+Const SDM3 As Long = 34	'SDM Address 2
+Const SDM3_ADDR As Long = 2
+Const SDM4 As Long = 35	'SDM Address 3
+Const SDM4_ADDR As Long = 3
+'Module #3
+Const SDM5 As Long = 36	'SDM Address 4
+Const SDM5_ADDR As Long = 4
+Const SDM6 As Long = 37	'SDM Address 5
+Const SDM6_ADDR As Long = 5
+'Module #4
+Const SDM7 As Long = 38	'SDM Address 6
+Const SDM7_ADDR As Long = 6
+Const SDM8 As Long = 39	'SDM Address 7
+Const SDM8_ADDR As Long = 7
+'Module #5
+Const SDM9 As Long = 40	'SDM Address 8
+Const SDM9_ADDR As Long = 8
+Const SDM10 As Long = 41	'SDM Address 9
+Const SDM10_ADDR As Long = 9
+
+'I'm using baud rates from the main program that could be used with the
+'specific SDM device. These can be changed.
+ConstTable (USER_ENTRY)
+	Const SDM1_BAUD  As Long = 9600 'BiralSWS200
+	Const SDM2_BAUD  As Long = 19200 'Rotronic HC2S3
+	Const SDM3_BAUD  As Long = 9600 'CH201
+	Const SDM4_BAUD  As Long = 38400 'CS125
+	Const SDM5_BAUD  As Long = 2400 'Vaisala DTS1
+	Const SDM6_BAUD  As Long = 115200 'SI04A_1_Dummy
+	Const SDM7_BAUD  As Long = 115200 'SkyVUE8
+	Const SDM8_BAUD  As Long = 9600 'GEDruck1Serial
+	Const SDM9_BAUD  As Long = 38400 'CS140
+	Const SDM10_BAUD As Long = 2400 'Setra470
+EndConstTable
+
+'Total number of SDM-SIO2R modules being tested. Each module has two
+'independant communication sections.
+Const NMBR_MODULES = 5
+
+Const SIO2 = False
+Const SIO2Port = 0   'SIO2 starting address, 0, 2, 4, 6, 8, etc
+Const SIO2Cmd = 7    'Setup byte sent to SIO2 device
+'For On/Off: 0 = No Change, 1 = On, 2 = Off. Right most digit is V+, 2nd digit from right is 12V
+Const SIO2On = &H11  'Turns on V+ and 12V
+Const SIO2Off = &H22 'Turns off V+ and 12V
+Const SIO2NumOut = 1 'Number of bytes sent to SIO2 (SIO2On, SIO2Off)
+Const SIO2Endian = 1 'Order of bytes sent or received, 0 = little endian, 1 = big endian, big endian is required for SIO2
+Const SIO2BytesPerValue = 1  'Number of bytes per value sent to the SIO2
+
+Const RET_CHAR = CHR (13)
+'Serial string used to test odd numbered SDM modules.
+Const SERIAL_OUT1 As String = "V128(hlN&r" & RET_CHAR
+'Serial string used to test even numbered SDM modules.
+Const SERIAL_OUT2 As String = "#$tP15qB&z" & RET_CHAR
+
+'Constants to indicate whether the module passed or failed the COM test.
+Const PASS As String = "PASS"
+Const FAIL As String = "FAIL"
+
+'I like to use the words ON and OFF instead of True and False.
+Const ON = True
+Const OFF = False
+
+'Declare Public Variables
+Public CR1X_TmpC
+Public CR1X_TmpF
+Public Batt_Volt
+
+'Use this flag to start the COM test through all the modules. Flag will
+'automatically turn off at the end of the test.
+Public RunCOMTest As Boolean
+
+'Use this flag to turn on the power to ALL the modules. Not automated.
+'Flag ON = all modules on. Flag OFF = all modules off.
+Public RunPWRTest As Boolean
+
+'Store the names for all the modules. Used in the stored data to indicate
+'which module was tested.
+Public ModuleName(10) As String = {"SDM1","SDM2","SDM3","SDM4","SDM5","SDM6","SDM7","SDM8","SDM9","SDM10"}
+
+'Variable array to hold the baud rate constants as defined above. Used for
+'stored data.
+Public ModBaud(10) As Long
+
+Public ModPF_Array(10) As String
+
+'These next variables are used to hold how the COM test went as well as
+'passing information to the stored data table.
+'String coming in from the SDM.
+Public ModInStr As String * 20
+'Name of the module being tested.
+Public ModuleOutName As String
+'Baud rate used for this SDM COM test.
+Public ModuleOutBaud As Long
+'Pass/Fail for the module being tested.
+Public ModPF As String
+'Test string sent out to the module.
+Public ModTstStr As String * 20
+'Counter
+Public SDMNmbr As Long
+'Sort of a dummy variable storing how the SerialOut test went. Not really
+'used but has to be in the program.
+Dim mod_return As Long
+
+'Data table storing how that specific module test went.
+DataTable (ModuleTest,True,200)
+	Sample (1,ModuleOutName,String)
+	Sample (1,ModuleOutBaud,Long)
+	Sample (1,ModTstStr,String)
+	Sample (1,ModInStr,String)
+	Sample (1,ModPF,String)
+	Sample (1,Batt_Volt,FP2)
+	Sample (1,CR1X_TmpF,FP2)
+EndTable
+
+'Temperature conversion functions
+'Converts Celsius to Fahrenheit.
+Function CtoF (tc)
+	Return (tc * 1.8 + 32.0)
+EndFunction
+
+'Main Program
+BeginProg
+	'Power down all modules.
+	SDMGeneric (mod_return,SDM1_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM2_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM3_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM4_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM5_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM6_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM7_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM8_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM9_ADDR,7,1,SIO2Off,0,1,1,-0)
+	SDMGeneric (mod_return,SDM10_ADDR,7,1,SIO2Off,0,1,1,-0)
+
+	'Set the counter to one for module #1.
+	SDMNmbr = 1
+
+	'Load ModBaud array with baud rates for the different SDM-SIO2R modules.
+	ModBaud(1)  = SDM1_BAUD
+	ModBaud(2)  = SDM2_BAUD
+	ModBaud(3)  = SDM3_BAUD
+	ModBaud(4)  = SDM4_BAUD
+	ModBaud(5)  = SDM5_BAUD
+	ModBaud(6)  = SDM6_BAUD
+	ModBaud(7)  = SDM7_BAUD
+	ModBaud(8)  = SDM8_BAUD
+	ModBaud(9)  = SDM9_BAUD
+	ModBaud(10) = SDM10_BAUD
+
+	Scan (1,Sec,0,0)
+		PanelTemp (CR1X_TmpC,15000)
+		CR1X_TmpF = CtoF (CR1X_TmpC)
+
+		Battery (Batt_Volt)
+
+		'If RunPWRTest flag is ON then turn on the power in all the modules.
+		If RunPWRTest = ON Then
+			SDMGeneric (mod_return,SDM1_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM2_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM3_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM4_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM5_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM6_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM7_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM8_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM9_ADDR,7,1,SIO2On,0,1,1,-0)
+			SDMGeneric (mod_return,SDM10_ADDR,7,1,SIO2On,0,1,1,-0)
+		Else	'Switch all the modules off.
+			SDMGeneric (mod_return,SDM1_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM2_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM3_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM4_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM5_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM6_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM7_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM8_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM9_ADDR,7,1,SIO2Off,0,1,1,-0)
+			SDMGeneric (mod_return,SDM10_ADDR,7,1,SIO2Off,0,1,1,-0)
+		EndIf
+
+		'COM test section. This section is huge because I can't use variables in a
+		'number of instructions. Can't use loops.
+
+		If RunCOMTest = ON Then
+			Select Case SDMNmbr
+
+				'SDM-SIO2R Module #1
+			Case Is = 1
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM1,SDM1_BAUD,0,200,300)
+				SerialFlush (SDM1)
+				SerialOut (SDM1,SERIAL_OUT1,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM1,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT1 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT1
+				CallTable ModuleTest
+
+			Case Is = 2
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM2,SDM2_BAUD,0,200,300)
+				SerialFlush (SDM2)
+				SerialOut (SDM2,SERIAL_OUT2,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM2,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT2 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT2
+				CallTable ModuleTest
+
+				'SDM-SIO2R Module #2
+			Case Is = 3
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM3,SDM3_BAUD,0,200,300)
+				SerialFlush (SDM3)
+				SerialOut (SDM3,SERIAL_OUT1,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM3,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT1 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT1
+				CallTable ModuleTest
+
+			Case Is = 4
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM4,SDM4_BAUD,0,200,300)
+				SerialFlush (SDM4)
+				SerialOut (SDM4,SERIAL_OUT2,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM4,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT2 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT2
+				CallTable ModuleTest
+
+				'SDM-SIO2R Module #3
+			Case Is = 5
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM5,SDM5_BAUD,0,200,300)
+				SerialFlush (SDM5)
+				SerialOut (SDM5,SERIAL_OUT1,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM5,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT1 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT1
+				CallTable ModuleTest
+
+			Case Is = 6
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM6,SDM6_BAUD,0,200,300)
+				SerialFlush (SDM6)
+				SerialOut (SDM6,SERIAL_OUT2,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM6,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT2 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT2
+				CallTable ModuleTest
+
+				'SDM-SIO2R Module #4
+			Case Is = 7
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM7,SDM7_BAUD,0,200,300)
+				SerialFlush (SDM7)
+				SerialOut (SDM7,SERIAL_OUT1,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM7,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT1 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT1
+				CallTable ModuleTest
+
+			Case Is = 8
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM8,SDM8_BAUD,0,200,300)
+				SerialFlush (SDM8)
+				SerialOut (SDM8,SERIAL_OUT2,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM8,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT2 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT2
+				CallTable ModuleTest
+
+				'SDM-SIO2R Module #5
+			Case Is = 9
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM9,SDM9_BAUD,0,200,300)
+				SerialFlush (SDM9)
+				SerialOut (SDM9,SERIAL_OUT1,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM9,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT1 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT1
+				CallTable ModuleTest
+
+			Case Is = 10
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+
+				SerialOpen (SDM10,SDM10_BAUD,0,200,300)
+				SerialFlush (SDM10)
+				SerialOut (SDM10,SERIAL_OUT2,"",0,0)
+				Delay(0, 100, 1)
+				SerialIn (ModInStr,SDM10,10,RET_CHAR,100)
+				If ModInStr = SERIAL_OUT2 Then
+					ModPF = "PASS"
+				Else
+					ModPF = "FAIL"
+				EndIf
+				ModPF_Array(SDMNmbr) = ModPF
+				ModuleOutName = ModuleName(SDMNmbr)
+				ModuleOutBaud = ModBaud(SDMNmbr)
+				ModTstStr = SERIAL_OUT2
+				CallTable ModuleTest
+			EndSelect
+			SDMNmbr += 1
+			'Switch off COM test flag when all modules have been tested.
+			If SDMNmbr >= (NMBR_MODULES * 2) + 1 Then
+				RunCOMTest = OFF
+				SDMNmbr = 1
+				'Clear out test strings.
+				ModInStr = ""
+				ModuleOutName = ""
+				ModuleOutBaud = 0
+				ModTstStr = ""
+				ModPF = ""
+			EndIf
+		EndIf
+
+	NextScan
+EndProg
+

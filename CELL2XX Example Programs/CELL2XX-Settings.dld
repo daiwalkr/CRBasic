@@ -1,0 +1,265 @@
+Public modem_apn As String * 50            'Current Access Point Name
+Public modem_battery_voltage               'Modem's current battery voltage
+  Units modem_battery_voltage = V  
+Public modem_current_day_usage As Long     'Today data usage statistics
+  Units modem_current_day_usage = kB
+Public modem_current_month_usage As Long   'Current month's data usage
+  Units modem_current_month_usage = kB
+Public modem_diversity As String           'Current setting for the Diversity Antenna
+Public modem_ecio                          'Current ECIO value (3G signal quality)
+Public modem_ipprotocol As String          'Current setting for IP Protocol (IPv4, IPv6, or IPv4/IPv6)
+Public modem_mode As String                'Current modem mode (PPP or Serial Server)
+Public modem_previous_day_usage As Long    'Previous day's data usage
+  Units modem_previous_day_usage = kB
+Public modem_previous_month_usage As Long  'Previous month's data usage
+  Units modem_previous_month_usage = kB
+Public modem_rsrp                          'Current modem RSRP value (LTE signal Strength)
+Public modem_rsrq                          'Current modem RSRQ value (LTE signal Quality)
+Public modem_rssi                          'Current modem RSSI value (3G signal strength)
+Public modem_sdc_address                   'Modem's current SDC address (CS I/O Port SDC Address setting)
+Public modem_state As String * 60          'Current state of the modem (status)
+Public modem_is_off As Boolean
+Public modem_reset_needed As Boolean
+
+'variables used to parse the strings returned by the modem.
+Const CRLF = CHR(13) & CHR(10) 
+Public returned_value As String * 70 'Temp string to hold the values returned by the modem
+
+'Other variables 
+Public battery_voltage
+Public panel_temperature_c
+
+DataTable(CELL_DIAGNOSTICS, TRUE, -1)
+  Sample(1, modem_apn, String)
+  Sample(1, modem_battery_voltage, FP2)
+  Sample(1, modem_current_day_usage, IEEE4)
+  Sample(1, modem_current_month_usage, IEEE4)
+  Sample(1, modem_diversity, String)
+  Sample(1, modem_ecio, FP2)
+  Sample(1, modem_ipprotocol, String)
+  Sample(1, modem_mode, String)
+  Sample(1, modem_previous_day_usage, IEEE4)
+  Sample(1, modem_previous_month_usage, IEEE4)
+  Sample(1, modem_rsrp, FP2)
+  Sample(1, modem_rsrq, FP2)
+  Sample(1, modem_rssi, FP2) 
+  Sample(1, modem_sdc_address, FP2)
+  Sample(1, modem_state, String)
+  Sample(1, modem_is_off, Boolean)
+  Sample(1, modem_reset_needed, Boolean)
+EndTable
+
+BeginProg
+  'Setup Campbell Scientific external modem
+  #If ((LoggerType = CR6 AND OSVERSION >= 9) OR (LoggerType = CR1000X AND OSVERSION >= 3)) Then
+    SetSetting("CellAPN", "WE01.VZWSTATIC")
+    SetSetting("CellDiversity", 0)
+    SetSetting("CELLBIllingDay", 10)
+    
+    SetSetting("PPPInterface", COMSDC8) 'Set PPP Interface to COMSDC8 
+
+    'Open a serial connection to the modem using the SDC address listed in the modem's Terminal Port CS I/O SDC Address: setting.
+    SerialOpen(ComSDC11, 460800, 0, 0, 500)
+  #Else
+    modem_reset_needed = FALSE
+    'Open a serial connection to the modem using the SDC address listed in the modem's Terminal Port CS I/O SDC Address: setting.
+    SerialOpen(ComSDC11, 460800, 0, 0, 500)
+    SerialOut(ComSDC11, CRLF , "CELL2xx>", 1, 200)
+    SerialOut(ComSDC11, "set apn WE01.VZWSTATIC" & CRLF, CRLF, 1, 200) 'Set the APN in the modem as required by the cellular provider
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "APN saved. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set div 0" & CRLF, CRLF, 1, 200) 'Tell the modem not to use the diversity anteanna on the cellular modem (default). 0 = off 1 = on
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Diversity saved. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set baud 115200" & CRLF, CRLF, 1, 200) 'Set the baud rate on the RS-232 port of the cellular modem
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Baud rate saved. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+
+    SerialOut(ComSDC11, "set mode PPP" & CRLF, CRLF, 1, 200) 'Set the mode the modem operates in PPP or SERIAL
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Mode set to PPP mode. Reboot required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set sdc 8" & CRLF, CRLF, 1, 200) 'Set the SDC address of the modem (7, 8, 10, 11)
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "SDC address saved. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set listen port 3001" & CRLF, CRLF, 1, 200) 'Set the mode the modem operates in PPP or SERIAL
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Listen port set. Reboot required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set billing 10" & CRLF, CRLF, 1, 200) 'Set day of the month for billing statistics
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    
+    SerialOut(ComSDC11, "set roaming auto" & CRLF, CRLF, 1, 200) 'Set the roaming mode of the datalogger (Auto or disabled).
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Roaming set to Auto. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+    
+    SerialOut(ComSDC11, "set ipprotocol IPv4" & CRLF, CRLF, 1, 200) 'Set the IP protocol used on the cellular network (IPv4, IPv6, or IPv4/IPv6).
+    SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+    If (returned_value = "Protocol set to IPV4. Cellular module reset required!" & CHR(13)) Then
+      modem_reset_needed = TRUE
+    EndIf
+
+    'other set commands include:
+    '  set ppp user (PPP username in modem)
+    '  set ppp pass (PPP password in modem)
+    '  set comms watch (allows user to sniff/watch a port, usually not used programactically)
+    
+    If (modem_reset_needed = TRUE) Then
+      Do While (modem_reset_needed = TRUE)
+        SerialOut(ComSDC11, "reboot" & CRLF, CRLF, 1, 200)
+        SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+        If (returned_value = "Reboot started . . ." & CHR(13)) Then
+          modem_reset_needed = FALSE
+          returned_value = ""
+        EndIf
+      Loop  
+    EndIf
+  #EndIf
+
+  Scan (1, SEC, 3, 0)
+    PanelTemp(panel_temperature_c, _60Hz) 
+    Battery(battery_voltage) 
+  NextScan
+    
+  SlowSequence  
+    Scan(2, MIN, 0, 0)
+      'reset our variales so we know we are getting good data everytime          
+      modem_apn = ""
+      modem_battery_voltage = 0
+      modem_current_day_usage = 0
+      modem_current_month_usage = 0
+      modem_diversity = ""
+      modem_ecio = 0
+      modem_ipprotocol = ""
+      modem_mode = ""
+      modem_previous_day_usage = 0
+      modem_previous_month_usage = 0
+      modem_sdc_address = 0
+      modem_state = ""
+      returned_value = ""
+         
+      SerialFlush(ComSDC11) 'clean out any garbage characters that might have come in.        
+      SerialOut(ComSDC11, CRLF , "CELL2xx>", 1, 200) 'Send a CRLF and wait CELL2xx prompt before continueing on. 
+      SerialOut(ComSDC11, "show apn" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(modem_apn, ComSDC11, 100, CHR(13), 1000)
+
+      SerialFlush(ComSDC11)
+      SerialOut(COMSDC11, "show rssi" & CRLF, CRLF, 1, 200) 'Query for the modem's serial port baud rate
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_rssi = returned_value 'convert string to numberic value
+      
+      SerialFlush(ComSDC11)
+      SerialOut(COMSDC11, "show rsrp" & CRLF, CRLF, 1, 200) 'Query for the modem's serial port baud rate
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_rsrp = returned_value 
+      
+      SerialFlush(ComSDC11)
+      SerialOut(COMSDC11, "show ecio" & CRLF, CRLF, 1, 200) 'Query for the modem's serial port baud rate
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_ecio = returned_value
+    
+      SerialFlush(ComSDC11)
+      SerialOut(COMSDC11, "show rsrq" & CRLF, CRLF, 1, 200) 'Query for the modem's serial port baud rate
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_rsrq = returned_value
+
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show diversity" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(modem_diversity, ComSDC11, 100, CHR(13), 1000)
+
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show ipprotocol" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(modem_ipprotocol, ComSDC11, 100, CHR(13), 1000)
+
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show sdc" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_sdc_address = returned_value
+
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show mode" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(modem_mode, ComSDC11, 100, CHR(13), 1000)
+      
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show state" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+      SerialIn(modem_state, ComSDC11, 100, CHR(13), 1000)
+      
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show usage today" & CRLF, CRLF, 1, 200) 'Query for today's cellular data usage
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_current_day_usage = returned_value
+       
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show usage yesterday" & CRLF, CRLF, 1, 200) 'Query for yesterday's cellular data usage
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_previous_day_usage = returned_value
+      
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show usage month" & CRLF, CRLF, 1, 200) 'Query for this month's cellular data usage
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_current_month_usage = returned_value
+       
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show usage lastmonth" & CRLF, CRLF, 1, 200) 'Query for last month's cellular data usage
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_previous_month_usage = returned_value
+      
+      SerialFlush(ComSDC11)
+      SerialOut(ComSDC11, "show bat" & CRLF, CRLF, 1, 200) 'Query for last month's cellular data usage
+      SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000)
+      modem_battery_voltage = returned_value
+    
+      CallTable CELL_DIAGNOSTICS
+    NextScan
+  EndSequence
+  
+  SlowSequence
+    Do
+      Delay(1, 5, Sec)
+      
+      If(TimeIsBetween(10, 58, 60, Min) AND modem_is_off <> TRUE) Then 'make sure the modem is off at 10 minutes into the hour until 58 minutes into the hour
+        Do Until (modem_is_off = TRUE)
+          SerialFlush(ComSDC11) 'clean out any garbage characters that might have come in.
+          SerialOut(ComSDC11, CRLF , "CELL2xx>", 1, 200) 'Send a CRLF and wait CELL2xx prompt before continueing on. 
+          SerialOut(ComSDC11, "deep sleep" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+          SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000) 
+          If(returned_value = "Sleep enabled." & CHR(13)) Then
+            modem_is_off = TRUE
+            returned_value = ""
+          EndIf 
+        Loop
+      EndIf
+      
+      If((TimeIsBetween(0, 10, 60, Min) OR TimeIsBetween(58, 60, 60, Min)) AND modem_is_off <> FALSE) Then 'turn the modem on at the top of the hour in a 10 minute windows
+        Do Until (modem_is_off = FALSE)
+          SerialFlush(ComSDC11) 'clean out any garbage characters that might have come in.
+          SerialOut(ComSDC11, CRLF , "CELL2xx>", 1, 200) 'Send a CRLF and wait CELL2xx prompt before continueing on. 
+          SerialOut(ComSDC11, "wakeup" & CRLF, CRLF, 1, 200) 'Query for the modems current APN setting.
+          SerialIn(returned_value, ComSDC11, 100, CHR(13), 1000) 
+          If(returned_value = "Sleep disabled." & CHR(13)) Then
+            modem_is_off = FALSE
+            returned_value = ""
+          EndIf 
+        Loop
+      EndIf
+    Loop
+  EndSequence
+EndProg
+

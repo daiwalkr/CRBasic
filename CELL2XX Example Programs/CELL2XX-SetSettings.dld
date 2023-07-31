@@ -1,0 +1,133 @@
+Public battery_voltage
+Public panel_temperature_c
+
+'cell modem diagnotics information
+Public cell_todays_usage : Units cell_todays_usage = KB
+Public cell_yesterdays_usage : Units cell_yesterdays_usage = KB
+Public cell_this_months_usage : Units cell_this_months_usage = KB
+Public cell_last_months_usage : Units cell_last_months_usage = KB
+Public cell_rssi As Long : Units cell_rssi = DB
+Public cell_info As String * 400
+Public cell_ip_address As String * 40
+Public cell_rsrp As Long
+Public cell_rsrq
+Public cell_ecio
+Public cell_status As String * 300
+Public cell_state As String * 100
+
+DataTable(CELL_DIAGNOSTICS, True, -1)
+  Sample(1, cell_todays_usage, FP2) 'or
+  Sample(1, Settings.CellUsageToday, FP2)
+  Sample(1, cell_yesterdays_usage, FP2) 'or
+  Sample(1, Settings.CellUsageYesterday, FP2)
+  Sample(1, cell_this_months_usage, FP2) 'or
+  Sample(1, Settings.CellUsageMonth, FP2)
+  Sample(1, cell_last_months_usage, FP2) 'or
+  Sample(1, Settings.CellUsageLastMonth, FP2)
+  Sample(1, cell_rssi, IEEE4) 'or
+  Sample(1, Settings.CellRSSI, IEEE4)
+  Sample(1, cell_info, String) 'or
+  Sample(1, Settings.CellInfo, String)
+  Sample(1, cell_ip_address, String)
+  Sample(1, cell_rsrp, IEEE4) 'or
+  Sample(1, Settings.CellRSRP, IEEE4)
+  Sample(1, cell_rsrq, FP2) 'or
+  Sample(1, Settings.CellRSRQ, FP2)
+  Sample(1, cell_ecio, FP2) 'or
+  Sample(1, Settings.CellECIO, FP2)
+  Sample(1, cell_status, String) 'or
+  Sample(1, Settings.CellStatus, String)
+  Sample(1, cell_state, String) 'or
+  Sample(1, Settings.CellState, String)
+EndTable
+
+DataTable(TEST_DATA, True, -1)
+  DataInterval(0, 5, Min, 10)
+  Minimum(1, battery_voltage, FP2, True, False)
+  Sample(1, panel_temperature_c, FP2)
+EndTable
+
+'Main Program
+BeginProg
+  'set up attached cell2xx module via CRBasic programming.
+  SetSetting("CellEnabled", True)         'Cell modem is enabled, True = enabled, False =
+                                          'disabled
+  SetSetting("CellAPN", "WE01.VZWSTATIC") 'The APN assigned to us by our cellular provider.
+  SetSetting("CellPwrStartTime", 1440)    'Automated startup schedule. Setting is in
+                                          'minutes (into day). 1440 = Always on. 15 =
+                                          '00:15 hours, 180 = 03:00 hours, 1380 = 23:00
+                                          'hours
+  SetSetting("CellPwrDuration", 0)        'How long the modem is to stay online after it
+                                          'hits it Start Time. Setting is ignored if
+                                          'CellPwrStartTime is set to 1440
+  SetSetting("CellPwrRepeat", 0)          'Specifies the interval (in minutes) after the
+                                          'first time of the day that the datalogger
+                                          'powers on its cellular interface, that the
+                                          'datalogger will power its cellular interface at
+                                          'subsequent times throughout the day. 0 =
+                                          'disabled.
+  SetSetting("CellBillingDay", 15)        'Tells the modem what day of the month to roll
+                                          'over its stats counters. Used to align it with
+                                          'my cellular provider’s billing dates.
+  SetSetting("CellDiversity", 1)          'Turns on the use of the cell modules diversity
+                                          'antenna in the cellular module. 0 = OFF. 1 =
+                                          'ON.
+  cell_ip_address = PPPOpen()             'Just make sure we are ready to go!
+
+  Scan (1,Sec,0,0)
+    PanelTemp (panel_temperature_c,60)
+    Battery (battery_voltage)
+
+    CallTable TEST_DATA
+  NextScan
+
+  SlowSequence
+
+  Scan (10, Min, 0, 0)
+    cell_rssi = Settings.CellRSSI                         'read RSSI (signal strength) from tower connected to
+    cell_todays_usage = Settings.CellUsageToday           'usage reported in KB
+    cell_yesterdays_usage = Settings.CellUsageYesterday   'usage reported in KB
+    cell_this_months_usage = Settings.CellUsageMonth      'usage reported in KB
+    cell_last_months_usage = Settings.CellUsageLastMonth  'usage reported in KB
+    cell_info = Settings.CellInfo                         'Cell Info. Same information that shows in the
+                                                          'DevConfig Cellular Network Status field
+    cell_status = Settings.CellStatus                     'Status of the cellular modem.
+    cell_state = Settings.CellState                       'State that the modem is in. "Network ready." lets me
+                                                          'know my modem is good to go.
+                                                          'CellState can be the following (but not limited to):
+                                                          '"Power off.",
+                                                          '"Powering up.",
+                                                          '"Powered up.",
+                                                          '"SIM authorized.",
+                                                          '"Setting baud rate.",
+                                                          '"Waiting for baud rate.",
+                                                          '"Baud rate set.",
+                                                          '"Baud rate failure.",
+                                                          '"Power off. Waiting for retry.",
+                                                          '"Powered up. SIM auth failure.",
+                                                          '"Querying modem.",
+                                                          '"Waiting for network registration.",
+                                                          '"Configuring modem.",
+                                                          '"Dialing.",
+                                                          '"Dialing (retry).",
+                                                          '"Dialed.",
+                                                          '"PPP negotiation.",
+                                                          '"Network ready.",
+                                                          '"PPP closing.",
+                                                          '"PPP paused.",
+                                                          '"PPP dropped.",
+                                                          '"Terminal AT command mode.",
+                                                          '"Firmware update mode.",
+                                                          '"Shutting down."
+    cell_rsrp = Settings.CellRSRP                         'Reference signal received power for LTE in dbm.
+                                                          'Very similar to RSSI
+    cell_ecio = Settings.CellECIO                         'Reference signal received quality for 3G.
+    cell_rsrq = Settings.CellRSRQ                         'Reference signal received quality for 4G.
+    cell_ip_address = IPInfo(1, 0)                        'Get the TCP/IP address of the PPP/cellular modem
+                                                          'interface.
+
+    CallTable CELL_DIAGNOSTICS
+  NextScan
+
+  EndSequence
+EndProg

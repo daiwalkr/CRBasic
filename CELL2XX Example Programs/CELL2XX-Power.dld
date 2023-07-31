@@ -1,0 +1,37 @@
+'Declare Variables and Units
+Public BattV
+Public PTemp_C
+Public ModuleState As Boolean
+Units BattV=Volts
+Units PTemp_C=Deg C
+'Define Data Tables
+DataTable(Daily,True,-1)
+  DataInterval(0,1440,Min,10)
+  Minimum(1,BattV,FP2,False,False)
+EndTable
+'Main Program
+BeginProg
+  'Main Scan
+  Scan(5,Sec,1,0)
+    'Default Data Logger Battery Voltage measurement 'BattV'
+    Battery(BattV)
+    'Default Wiring Panel Temperature measurement 'PTemp_C'
+    PanelTemp(PTemp_C,60)
+    'Between the hours of 9:00 and 17:00, turn the CELL200 series
+    'on for 15 minutes at the start of every hour
+    If TimeIsBetween(9,17,24,Hr) AND TimeIsBetween(0,15,60,Min) Then
+      ModuleState=True
+      IPNetPower(5,1)
+    Else
+      ModuleState=False
+      IPNetPower(5,0)
+    EndIf
+    'Always turn OFF CELL200 series if battery drops below 11.5 volts
+    If BattV<11.5 Then
+      'Set CELL200 series power to the state of 'ModuleState' variable
+      IPNetPower(5,0)
+    EndIf
+    'Call Data Tables and Store Data
+    CallTable Daily
+  NextScan
+EndProg
